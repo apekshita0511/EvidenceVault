@@ -1,0 +1,44 @@
+{
+    "name":  "evidencevault",
+    "version":  "1.0.0",
+    "description":  "Digital Evidence Integrity and Investigation Platform",
+    "main":  "dist/server.js",
+    "type":  "module",
+    "scripts":  {
+                    "dev":  "tsx watch src/server.ts",
+                    "build":  "tsc",
+                    "start":  "node dist/server.js",
+                    "migrate":  "tsx src/scripts/migrate.ts",
+                    "test:prepare":  "tsx tests/prepare-test-db.ts",
+                    "test":  "npm run test:prepare \u0026\u0026 tsx --test --test-concurrency=1 tests/*.test.ts"
+                },
+    "keywords":  [
+                     "digital-forensics",
+                     "evidence-integrity",
+                     "cybersecurity"
+                 ],
+    "author":  "",
+    "license":  "ISC",
+    "dependencies":  {
+                         "bcrypt":  "^6.0.0",
+                         "cors":  "^2.8.6",
+                         "dotenv":  "^18.0.5",
+                         "express":  "^5.2.1",
+                         "express-rate-limit":  "^8.7.0",
+                         "helmet":  "^8.3.0",
+                         "jsonwebtoken":  "^9.0.3",
+                         "multer":  "^2.4.0",
+                         "pg":  "^8.23.1"
+                     },
+    "devDependencies":  {
+                            "@types/bcrypt":  "^6.0.0",
+                            "@types/cors":  "^2.8.19",
+                            "@types/express":  "^5.0.6",
+                            "@types/jsonwebtoken":  "^9.0.10",
+                            "@types/multer":  "^2.3.0",
+                            "@types/node":  "^26.6.4",
+                            "@types/pg":  "^8.23.1",
+                            "tsx":  "^4.23.15",
+                            "typescript":  "^7.0.2"
+                        }
+}
