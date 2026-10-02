@@ -4,6 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+process.env.NODE_ENV = "test";
 process.env.DB_NAME = "evidencevault_test";
 process.env.JWT_SECRET = "test-secret-not-for-production-use";
 process.env.JWT_EXPIRES_IN = "1h";

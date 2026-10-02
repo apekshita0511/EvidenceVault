@@ -27,9 +27,12 @@ Prerequisites: Node 20+, PostgreSQL with a database named `evidencevault`.
 npm install
 copy .env.example .env      # then fill in real values (never commit .env)
 npm run migrate             # applies pending migrations; additive, never drops data
-npm run dev                 # development (tsx watch)
-npm run build && npm start  # production build and run
+npm run dev                 # backend only, http://localhost:5000 (tsx watch)
+npm run dev:web             # frontend dev server, http://localhost:5173 (proxies /api to :5000)
+npm run build:all && npm start   # production: builds API + UI, serves both on :5000
 ```
+
+`npm run setup` installs root and `frontend/` dependencies. In dev, open the Vite URL (5173). In production the Express server also serves the built UI from `frontend/dist`, so everything is on port 5000. To point the dev proxy at a different backend: `API_PROXY_TARGET=http://localhost:5055 npm run dev:web`.
 
 ### Environment variables
 
@@ -53,7 +56,11 @@ npm run build && npm start  # production build and run
 | POST | `/api/auth/login` | returns JWT |
 | GET | `/api/auth/me` | current user |
 | POST | `/api/evidence` | multipart: `file`, `title`, `evidence_type`, optional `description` |
-| GET | `/api/evidence`, `/api/evidence/:id` | detail includes custody trail |
+| GET | `/api/evidence` | query: `q`, `type`, `integrity` (verified/unverified/failed), `sort`, `dir`, `page`, `page_size`; each item has derived `integrity` and `uploaded_by_name` |
+| GET | `/api/evidence/stats`, `/api/evidence/options` | counts by integrity state plus uploads in the last 7 days; distinct types and upload size limit |
+| GET | `/api/evidence/:id` | detail includes custody trail |
+| GET | `/api/custody` | custody events for evidence you can access (`limit`, `offset`, optional `evidence_id`, `action` = registered/accessed/integrity/integrity_match/integrity_mismatch/integrity_unreadable) |
+| GET | `/api/audit` | audit entries (`limit`, `offset`, optional `evidence_id`); admins see all, others only their own |
 | GET | `/api/evidence/:id/download` | records an `accessed` custody event |
 | POST | `/api/evidence/:id/verify` | re-hashes stored file; `match`, `mismatch` (200) or `unreadable` (409) |
 
@@ -68,6 +75,10 @@ curl -X POST localhost:5000/api/evidence -H "Authorization: Bearer <token>" \
   -F title="Laptop image" -F evidence_type=disk_image -F file=@sample.bin
 curl -X POST localhost:5000/api/evidence/1/verify -H "Authorization: Bearer <token>"
 ```
+
+## Frontend
+
+React + TypeScript + Vite in `frontend/` (React Router, Lucide icons, self-hosted Inter font, plain CSS design tokens). Pages: sign in / register, Overview, Evidence Vault (search, filters, sorting, pagination, upload dialog with progress), Evidence detail (verify, download, custody, audit), Chain of Custody, Audit Logs. All data comes from the API; nothing is mocked. The JWT is kept in `sessionStorage` (cleared when the tab closes); any script on the origin could read it, so the app loads no third-party scripts and the server sets a strict CSP via Helmet. An expired or invalid token signs the user out. "Verified" in the UI means the most recent verification run matched; "Not yet verified" means none has been run.
 
 ## Access model
 

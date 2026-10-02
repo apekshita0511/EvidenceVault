@@ -10,7 +10,11 @@
                     "start":  "node dist/server.js",
                     "migrate":  "tsx src/scripts/migrate.ts",
                     "test:prepare":  "tsx tests/prepare-test-db.ts",
-                    "test":  "npm run test:prepare \u0026\u0026 tsx --test --test-concurrency=1 tests/*.test.ts"
+                    "test":  "npm run test:prepare \u0026\u0026 tsx --test --test-concurrency=1 tests/*.test.ts",
+                    "dev:web":  "npm --prefix frontend run dev",
+                    "build:web":  "npm --prefix frontend run build",
+                    "build:all":  "npm run build \u0026\u0026 npm run build:web",
+                    "setup":  "npm install \u0026\u0026 npm --prefix frontend install"
                 },
     "keywords":  [
                      "digital-forensics",
