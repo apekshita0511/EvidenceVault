@@ -30,7 +30,7 @@ describe("evidence list, filters and stats", () => {
     const list = (q: string) => api("GET", `/api/evidence${q}`, { token: u.token });
     assert.equal((await list("")).data.total, 2);
     assert.deepEqual((await list("?integrity=verified")).data.evidence.map((e: { id: string }) => e.id), [a.id]);
-    assert.deepEqual((await list("?integrity=failed")).data.evidence.map((e: { id: string }) => e.id), [b.id]);
+    assert.deepEqual((await list("?integrity=mismatch")).data.evidence.map((e: { id: string }) => e.id), [b.id]);
     assert.equal((await list("?integrity=unverified")).data.total, 0);
     assert.deepEqual((await list("?q=phone")).data.evidence.map((e: { id: string }) => e.id), [b.id]);
     assert.equal((await list("?q=%25")).data.total, 0, "wildcards in search are escaped");
@@ -43,7 +43,7 @@ describe("evidence list, filters and stats", () => {
     assert.equal((await list("?sort=password_hash")).status, 400);
 
     assert.deepEqual((await api("GET", "/api/evidence/stats", { token: u.token })).data.stats,
-      { total: 2, verified: 1, failed: 1, unverified: 0, recent_uploads: 2 });
+      { total: 2, verified: 1, mismatch: 1, unavailable: 0, unverified: 0, recent_uploads: 2 });
     assert.deepEqual((await api("GET", "/api/evidence/options", { token: u.token })).data.types, ["disk_image", "mobile"]);
   });
 
@@ -52,7 +52,7 @@ describe("evidence list, filters and stats", () => {
     const other = await registerAndLogin();
     await up(owner.token, "zzz");
     assert.deepEqual((await api("GET", "/api/evidence/stats", { token: other.token })).data.stats,
-      { total: 0, verified: 0, failed: 0, unverified: 0, recent_uploads: 0 });
+      { total: 0, verified: 0, mismatch: 0, unavailable: 0, unverified: 0, recent_uploads: 0 });
   });
 });
 

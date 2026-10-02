@@ -14,7 +14,8 @@
                     "dev:web":  "npm --prefix frontend run dev",
                     "build:web":  "npm --prefix frontend run build",
                     "build:all":  "npm run build \u0026\u0026 npm run build:web",
-                    "setup":  "npm install \u0026\u0026 npm --prefix frontend install"
+                    "setup":  "npm install \u0026\u0026 npm --prefix frontend install",
+                    "demo:tamper":  "tsx src/scripts/tamper-demo.ts"
                 },
     "keywords":  [
                      "digital-forensics",

@@ -38,7 +38,7 @@ export function OverviewPage() {
   const metrics = [
     { label: "Total evidence", value: s?.total, icon: Files, tone: "info", sub: "Items you can access" },
     { label: "Verified", value: s?.verified, icon: CircleCheck, tone: "success", sub: "Latest check matched" },
-    { label: "Failed checks", value: s?.failed, icon: CircleAlert, tone: "danger", sub: "Latest check failed" },
+    { label: "Mismatches", value: s?.mismatch, icon: CircleAlert, tone: "danger", sub: "Latest check found changed bytes" },
     { label: "Added this week", value: s?.recent_uploads, icon: CalendarPlus, tone: "neutral", sub: "Last 7 days" },
   ] as const;
 
@@ -46,7 +46,8 @@ export function OverviewPage() {
   const seg = s ? [
     { n: s.verified, color: "var(--success)", label: "Verified" },
     { n: s.unverified, color: "var(--warning)", label: "Not yet verified" },
-    { n: s.failed, color: "var(--danger)", label: "Failed" },
+    { n: s.mismatch, color: "var(--danger)", label: "Mismatch" },
+    { n: s.unavailable, color: "var(--accent)", label: "Unavailable" },
   ] : [];
 
   return (

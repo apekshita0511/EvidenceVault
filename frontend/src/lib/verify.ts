@@ -11,7 +11,7 @@ export async function runVerification(id: string, toast: Toast): Promise<VerifyR
     const r = await evidenceApi.verify(id);
     if (r.result === "match") toast.show("success", "Integrity check passed: recomputed SHA-256 matches the recorded digest.");
     else if (r.result === "mismatch") toast.show("error", "Integrity check failed: SHA-256 does not match the recorded digest.");
-    else toast.show("error", "Integrity check failed: stored file is missing or unreadable.");
+    else toast.show("info", "Verification unavailable: the stored file is missing or unreadable. This does not indicate tampering.");
     return r;
   } catch (e) {
     toast.show("error", `Verification could not be completed: ${e instanceof ApiError ? e.message : "unexpected error"}`);

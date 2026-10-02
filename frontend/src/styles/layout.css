@@ -68,6 +68,7 @@ a.list-item:hover { background: rgba(255,255,255,.025); color: inherit; }
 .dl dd { margin: 0; min-width: 0; word-break: break-word; }
 .hash-full { display: flex; gap: 8px; align-items: flex-start; font-family: var(--mono); font-size: 12.5px; word-break: break-all; background: var(--bg); border: 1px solid var(--border); padding: 8px 10px; border-radius: var(--radius-sm); }
 .hash-full .btn { flex: none; }
+.hash-full.differs { border-color: rgba(248,113,113,.5); background: var(--danger-soft); }
 .verify-panel { padding: 20px; display: flex; flex-direction: column; gap: 14px; }
 
 /* Timeline */

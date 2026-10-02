@@ -15,7 +15,7 @@ src/
   middleware/            JWT authentication, role check, error handler
   services/audit.service.ts   append-only audit + custody writers
   scripts/               SQL migration runner
-migrations/              versioned SQL (000 baseline, 001 file metadata, 002 append-only triggers)
+migrations/              versioned SQL (000 baseline, 001 file metadata, 002 append-only triggers, 003 immutable original digest)
 tests/                   node:test suites against an isolated test database
 ```
 
@@ -56,13 +56,13 @@ npm run build:all && npm start   # production: builds API + UI, serves both on :
 | POST | `/api/auth/login` | returns JWT |
 | GET | `/api/auth/me` | current user |
 | POST | `/api/evidence` | multipart: `file`, `title`, `evidence_type`, optional `description` |
-| GET | `/api/evidence` | query: `q`, `type`, `integrity` (verified/unverified/failed), `sort`, `dir`, `page`, `page_size`; each item has derived `integrity` and `uploaded_by_name` |
-| GET | `/api/evidence/stats`, `/api/evidence/options` | counts by integrity state plus uploads in the last 7 days; distinct types and upload size limit |
+| GET | `/api/evidence` | query: `q`, `type`, `integrity` (verified/unverified/mismatch/unavailable), `sort`, `dir`, `page`, `page_size`; each item has derived `integrity` and `uploaded_by_name` |
+| GET | `/api/evidence/stats`, `/api/evidence/options` | counts (`verified`, `mismatch`, `unavailable`, `unverified`) plus uploads in the last 7 days; distinct types and upload size limit |
 | GET | `/api/evidence/:id` | detail includes custody trail |
 | GET | `/api/custody` | custody events for evidence you can access (`limit`, `offset`, optional `evidence_id`, `action` = registered/accessed/integrity/integrity_match/integrity_mismatch/integrity_unreadable) |
 | GET | `/api/audit` | audit entries (`limit`, `offset`, optional `evidence_id`); admins see all, others only their own |
 | GET | `/api/evidence/:id/download` | records an `accessed` custody event |
-| POST | `/api/evidence/:id/verify` | re-hashes stored file; `match`, `mismatch` (200) or `unreadable` (409) |
+| POST | `/api/evidence/:id/verify` | re-hashes the stored file on the server; `match` or `mismatch` (200), or `unreadable` (409, with `reason`). Client input is only the id |
 
 Responses use `{ "success": boolean, ... }`. Examples (fake data):
 
@@ -87,6 +87,26 @@ Admins can see all evidence; other users only evidence they uploaded. Evidence y
 ## Evidence storage
 
 Files are saved under random UUID names in `EVIDENCE_DIR`; the client filename is stored only as metadata. SHA-256 is computed server-side from the stored bytes. `evidence.file_path` holds the storage name, not a client-supplied path. Files are never overwritten or deleted by the API.
+
+## Integrity verification and tamper detection
+
+`POST /api/evidence/:id/verify` resolves the file from the evidence record (never from client input), validates the stored name (server-generated names only; separators, `..` and odd characters are refused), streams the file through SHA-256, and compares it with the digest recorded at upload. Outcomes:
+
+- `match`: the recalculated digest equals the recorded digest.
+- `mismatch`: the bytes differ. Recorded as a custody event, an audit entry, and a separate `evidence.integrity_mismatch` security event.
+- `unreadable` (HTTP 409): the file is missing/unreadable, the stored reference is unsafe, or the recorded digest is malformed. This is reported as **unavailable**, never as a match and never as tampering.
+
+Each check writes its custody and audit rows in one transaction. The evidence row is never updated by verification, and migration `003` adds a database trigger that rejects changes to `sha256_hash`, `file_path` and `uploaded_by`, so the original digest cannot be rewritten to "match" modified bytes (a superuser can still drop the trigger).
+
+A mismatch shows that the bytes differ from the recorded digest. It does not show who changed them, when, or how.
+
+### Safe tamper-detection demo
+
+```
+npm run demo:tamper
+```
+
+Works only in a freshly created temp directory with generated data (no database, no real vault) and removes it afterwards. Expected output: step 2 `MATCH` (recorded and computed digests equal), step 4 `MISMATCH` (computed digest differs), step 6 `UNREADABLE` (no computed digest), then `Temporary directory removed: true`.
 
 ## Testing
 

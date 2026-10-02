@@ -1,10 +1,10 @@
 import fs from "node:fs";
-import path from "node:path";
 import type { Request, Response } from "express";
 import { pool } from "../config/database.js";
 import { config } from "../config/env.js";
 import { recordAudit, recordCustody } from "../services/audit.service.js";
 import { sha256File } from "../utils/hash.js";
+import { checkStoredFile, resolveStoragePath, type UnavailableReason } from "../services/integrity.service.js";
 
 // "integrity" is derived from the most recent verification event in chain_of_custody:
 // match | mismatch | unreadable, or null if the evidence was never verified.
@@ -20,7 +20,6 @@ const SELECT = `SELECT e.id::text AS id, e.title, e.description, e.evidence_type
 const FROM = `FROM evidence e JOIN users u ON u.id = e.uploaded_by ${LATEST_VERIFY}`;
 
 const parseId = (v: unknown) => (typeof v === "string" && /^\d{1,18}$/.test(v) ? v : null);
-const storedPath = (fileName: string) => path.join(config.evidenceDir, path.basename(fileName));
 const removeQuietly = (p: string) => fs.promises.unlink(p).catch(() => undefined);
 
 // Admins see everything; other users only see evidence they uploaded.
@@ -108,7 +107,8 @@ export const createEvidence = async (req: Request, res: Response) => {
 
 const INTEGRITY_FILTERS: Record<string, string> = {
   verified: "li.action = 'integrity_match'",
-  failed: "li.action IN ('integrity_mismatch', 'integrity_unreadable')",
+  mismatch: "li.action = 'integrity_mismatch'",
+  unavailable: "li.action = 'integrity_unreadable'",
   unverified: "li.action IS NULL",
 };
 const SORTS: Record<string, string> = {
@@ -166,7 +166,8 @@ export const evidenceOptions = async (req: Request, res: Response) => {
   res.status(200).json({ success: true, types: result.rows.map((r) => r.evidence_type), max_upload_bytes: config.maxUploadBytes });
 };
 
-// "verified" = most recent verification matched; "failed" = most recent was a mismatch or unreadable;
+// "verified" = most recent verification matched; "mismatch" = most recent found different bytes;
+// "unavailable" = most recent could not read the file (not evidence of tampering);
 // "unverified" = never verified through the API.
 export const evidenceStats = async (req: Request, res: Response) => {
   const user = req.user!;
@@ -174,7 +175,8 @@ export const evidenceStats = async (req: Request, res: Response) => {
   const result = await pool.query(
     `SELECT count(*)::int AS total,
             (count(*) FILTER (WHERE li.action = 'integrity_match'))::int AS verified,
-            (count(*) FILTER (WHERE li.action IN ('integrity_mismatch','integrity_unreadable')))::int AS failed,
+            (count(*) FILTER (WHERE li.action = 'integrity_mismatch'))::int AS mismatch,
+            (count(*) FILTER (WHERE li.action = 'integrity_unreadable'))::int AS unavailable,
             (count(*) FILTER (WHERE li.action IS NULL))::int AS unverified,
             (count(*) FILTER (WHERE e.created_at > now() - interval '7 days'))::int AS recent_uploads
      FROM evidence e ${LATEST_VERIFY} ${scope}`,
@@ -190,14 +192,27 @@ export const getEvidence = async (req: Request, res: Response) => {
      FROM chain_of_custody WHERE evidence_id = $1 ORDER BY id`,
     [row.id]
   );
-  res.status(200).json({ success: true, evidence: row, chain_of_custody: custody.rows });
+  const latest = await pool.query(
+    `SELECT a.created_at AS verified_at, a.details, u.name AS verified_by
+     FROM audit_logs a LEFT JOIN users u ON u.id = a.user_id
+     WHERE a.action = 'evidence.verify' AND a.entity_type = 'evidence' AND a.entity_id = $1
+     ORDER BY a.id DESC LIMIT 1`,
+    [row.id]
+  );
+  const l = latest.rows[0];
+  const latestVerification = l && {
+    result: l.details.result, recorded_sha256: l.details.recorded_sha256, computed_sha256: l.details.computed_sha256 ?? null,
+    reason: l.details.reason ?? null, verified_at: l.verified_at, verified_by: l.verified_by,
+  };
+  res.status(200).json({ success: true, evidence: row, chain_of_custody: custody.rows, latest_verification: latestVerification ?? null });
 };
 
 export const downloadEvidence = async (req: Request, res: Response) => {
   const row = await findAccessible(req, res, ", e.file_path");
   if (!row) return;
-  const filePath = storedPath(row.file_path);
+  const filePath = resolveStoragePath(config.evidenceDir, row.file_path);
   try {
+    if (!filePath) throw new Error("unsafe storage path");
     await fs.promises.access(filePath, fs.constants.R_OK);
   } catch {
     return res.status(500).json({ success: false, message: "Stored file is unavailable" });
@@ -214,31 +229,35 @@ export const downloadEvidence = async (req: Request, res: Response) => {
   } finally {
     client.release();
   }
-  res.download(filePath, row.original_filename ?? `evidence-${row.id}`);
+  res.download(filePath!, row.original_filename ?? `evidence-${row.id}`);
 };
 
+const UNAVAILABLE_MESSAGES: Record<UnavailableReason, string> = {
+  missing_or_unreadable: "Stored file is missing or unreadable. This does not indicate tampering.",
+  malformed_recorded_digest: "The recorded digest is malformed, so no comparison was possible.",
+  unsafe_storage_path: "The stored file reference is invalid, so no comparison was possible.",
+};
+const NOTE =
+  "A matching SHA-256 digest indicates that the checked file bytes match the recorded digest. A mismatch indicates that the bytes differ from the recorded digest; it does not by itself establish when, how, or by whom the change occurred.";
+
+// Recomputes the digest on the server from the stored file. The client supplies nothing but the evidence id.
 export const verifyEvidence = async (req: Request, res: Response) => {
   const row = await findAccessible(req, res, ", e.file_path");
   if (!row) return;
 
-  let result: "match" | "mismatch" | "unreadable";
-  let actual: string | null = null;
-  try {
-    actual = await sha256File(storedPath(row.file_path));
-    result = actual === row.sha256_hash ? "match" : "mismatch";
-  } catch {
-    result = "unreadable";
-  }
+  const check = await checkStoredFile(config.evidenceDir, row.file_path, row.sha256_hash);
 
+  // Custody + audit (+ a dedicated security event on mismatch) commit together or not at all.
+  // The evidence row itself is never updated: the original digest stays as recorded.
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
-    await recordCustody(row.id, `integrity_${result}`, req.user!.id, `Integrity verification result: ${result}`, client);
-    await recordAudit(
-      { userId: req.user!.id, action: "evidence.verify", entityType: "evidence", entityId: row.id,
-        details: { result, recorded_sha256: row.sha256_hash, computed_sha256: actual } },
-      client
-    );
+    await recordCustody(row.id, `integrity_${check.result}`, req.user!.id, `Integrity verification result: ${check.result}`, client);
+    const details = { result: check.result, recorded_sha256: row.sha256_hash, computed_sha256: check.computed, reason: check.reason ?? null };
+    await recordAudit({ userId: req.user!.id, action: "evidence.verify", entityType: "evidence", entityId: row.id, details }, client);
+    if (check.result === "mismatch") {
+      await recordAudit({ userId: req.user!.id, action: "evidence.integrity_mismatch", entityType: "evidence", entityId: row.id, details }, client);
+    }
     await client.query("COMMIT");
   } catch (error) {
     await client.query("ROLLBACK").catch(() => undefined);
@@ -247,16 +266,17 @@ export const verifyEvidence = async (req: Request, res: Response) => {
     client.release();
   }
 
-  const note =
-    "A match means the checked bytes equal the recorded hash. It does not prove when, where or by whom the evidence originated.";
-  if (result === "unreadable") {
-    return res.status(409).json({ success: false, result, message: "Stored file is missing or unreadable", note });
+  if (check.result === "unreadable") {
+    return res.status(409).json({
+      success: false, result: check.result, reason: check.reason,
+      message: UNAVAILABLE_MESSAGES[check.reason!], note: NOTE,
+    });
   }
   return res.status(200).json({
     success: true,
-    result,
+    result: check.result,
     recorded_sha256: row.sha256_hash,
-    computed_sha256: actual,
-    note,
+    computed_sha256: check.computed,
+    note: NOTE,
   });
 };

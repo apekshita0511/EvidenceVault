@@ -28,7 +28,7 @@ describe("verification workflow", () => {
     const ev = await get(u.token, id);
     assert.equal(ev.integrity, null);
     assert.equal(ev.last_verified_at, null);
-    assert.deepEqual(await stats(u.token), { total: 1, verified: 0, failed: 0, unverified: 1, recent_uploads: 1 });
+    assert.deepEqual(await stats(u.token), { total: 1, verified: 0, mismatch: 0, unavailable: 0, unverified: 1, recent_uploads: 1 });
     assert.deepEqual(await events(id), ["registered"]);
   });
 
@@ -47,7 +47,7 @@ describe("verification workflow", () => {
     assert.equal(ev.sha256_hash, hash, "recorded digest is never rewritten by verification");
     const list = await api("GET", "/api/evidence", { token: u.token });
     assert.equal(list.data.evidence[0].integrity, "match");
-    assert.deepEqual(await stats(u.token), { total: 1, verified: 1, failed: 0, unverified: 0, recent_uploads: 1 });
+    assert.deepEqual(await stats(u.token), { total: 1, verified: 1, mismatch: 0, unavailable: 0, unverified: 0, recent_uploads: 1 });
     assert.deepEqual(await events(id), ["registered", "integrity_match"]);
     assert.equal((await verifyAudits(id))[0].result, "match");
   });
@@ -61,7 +61,7 @@ describe("verification workflow", () => {
     assert.equal(bad.data.result, "mismatch");
     assert.notEqual(bad.data.computed_sha256, bad.data.recorded_sha256);
     assert.equal((await get(u.token, id)).integrity, "mismatch");
-    assert.deepEqual(await stats(u.token), { total: 1, verified: 0, failed: 1, unverified: 0, recent_uploads: 1 });
+    assert.deepEqual(await stats(u.token), { total: 1, verified: 0, mismatch: 1, unavailable: 0, unverified: 0, recent_uploads: 1 });
 
     fs.writeFileSync(file, ORIGINAL); // controlled test restore of the original bytes
     assert.equal((await api("POST", `/api/evidence/${id}/verify`, { token: u.token })).data.result, "match");
@@ -77,7 +77,9 @@ describe("verification workflow", () => {
     assert.equal(r.status, 409);
     assert.equal(r.data.result, "unreadable");
     assert.equal((await get(u.token, id)).integrity, "unreadable");
-    assert.deepEqual(await stats(u.token), { total: 1, verified: 0, failed: 1, unverified: 0, recent_uploads: 1 });
+    assert.equal(r.data.reason, "missing_or_unreadable");
+    assert.match(r.data.message, /does not indicate tampering/);
+    assert.deepEqual(await stats(u.token), { total: 1, verified: 0, mismatch: 0, unavailable: 1, unverified: 0, recent_uploads: 1 }, "unavailable is not counted as tampering");
     assert.deepEqual(await events(id), ["registered", "integrity_unreadable"]);
   });
 
@@ -111,5 +113,69 @@ describe("verification workflow", () => {
       const res = await fetch(base + p, { headers: { authorization: `Bearer ${u.token}` } });
       assert.equal(res.headers.get("cache-control"), "no-store", p);
     }
+  });
+});
+describe("digest preservation and tamper evidence", () => {
+  const recordedDigest = async (id: string) => (await pool.query("SELECT sha256_hash FROM evidence WHERE id=$1", [id])).rows[0].sha256_hash;
+
+  it("Test E: a mismatch or missing-file result never overwrites the originally recorded digest", async () => {
+    const u = await registerAndLogin();
+    const { id, file, hash } = await upload(u.token, "digest preservation");
+    fs.appendFileSync(file, "tampered");
+    assert.equal((await api("POST", `/api/evidence/${id}/verify`, { token: u.token })).data.result, "mismatch");
+    assert.equal(await recordedDigest(id), hash);
+    fs.unlinkSync(file);
+    assert.equal((await api("POST", `/api/evidence/${id}/verify`, { token: u.token })).status, 409);
+    assert.equal(await recordedDigest(id), hash);
+    assert.equal((await get(u.token, id)).sha256_hash, hash);
+  });
+
+  it("the database refuses to rewrite the recorded digest, storage path or uploader", async () => {
+    const u = await registerAndLogin();
+    const { id } = await upload(u.token);
+    await assert.rejects(pool.query("UPDATE evidence SET sha256_hash=$1 WHERE id=$2", ["0".repeat(64), id]), /immutable/);
+    await assert.rejects(pool.query("UPDATE evidence SET file_path='other' WHERE id=$1", [id]), /immutable/);
+    await assert.rejects(pool.query("UPDATE evidence SET uploaded_by=uploaded_by+1 WHERE id=$1", [id]), /immutable/);
+    await pool.query("UPDATE evidence SET status='under_review' WHERE id=$1", [id]); // other fields stay editable
+  });
+
+  it("a mismatch is also recorded as its own security event, with actor and evidence, and no file contents", async () => {
+    const u = await registerAndLogin();
+    const { id, file } = await upload(u.token, "secret file contents");
+    fs.appendFileSync(file, "x");
+    await api("POST", `/api/evidence/${id}/verify`, { token: u.token });
+    const rows = (await pool.query("SELECT user_id::text AS uid, details FROM audit_logs WHERE entity_id=$1 AND action='evidence.integrity_mismatch'", [id])).rows;
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].uid, u.id);
+    assert.equal(rows[0].details.result, "mismatch");
+    assert.ok(!JSON.stringify(rows[0].details).includes("secret file contents"));
+    assert.equal((await verifyAudits(id)).length, 1, "the regular verify entry is still recorded once");
+  });
+
+  it("detail returns the latest verification: recorded and computed digests, outcome, time and actor", async () => {
+    const u = await registerAndLogin();
+    const { id, file, hash } = await upload(u.token, "latest verification");
+    assert.equal((await api("GET", `/api/evidence/${id}`, { token: u.token })).data.latest_verification, null);
+    await api("POST", `/api/evidence/${id}/verify`, { token: u.token });
+    fs.appendFileSync(file, "x");
+    await api("POST", `/api/evidence/${id}/verify`, { token: u.token });
+    const lv = (await api("GET", `/api/evidence/${id}`, { token: u.token })).data.latest_verification;
+    assert.equal(lv.result, "mismatch");
+    assert.equal(lv.recorded_sha256, hash);
+    assert.match(lv.computed_sha256, /^[0-9a-f]{64}$/);
+    assert.notEqual(lv.computed_sha256, hash);
+    assert.ok(lv.verified_at);
+    assert.equal(lv.verified_by, "Test User");
+  });
+
+  it("filters separate mismatch from unavailable", async () => {
+    const u = await registerAndLogin();
+    const a = await upload(u.token, "aaa1"); const b = await upload(u.token, "bbb2");
+    fs.appendFileSync(a.file, "x"); fs.unlinkSync(b.file);
+    await api("POST", `/api/evidence/${a.id}/verify`, { token: u.token });
+    await api("POST", `/api/evidence/${b.id}/verify`, { token: u.token });
+    const ids = async (f: string) => (await api("GET", `/api/evidence?integrity=${f}`, { token: u.token })).data.evidence.map((e: { id: string }) => e.id);
+    assert.deepEqual(await ids("mismatch"), [a.id]);
+    assert.deepEqual(await ids("unavailable"), [b.id]);
   });
 });

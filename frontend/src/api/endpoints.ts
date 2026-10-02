@@ -1,6 +1,6 @@
 import { request, uploadWithProgress } from "./client";
 import type {
-  AuditEntry, CustodyEntry, CustodyFeedEvent, Evidence, EvidenceFilters, EvidenceList,
+  AuditEntry, CustodyEntry, LatestVerification, CustodyFeedEvent, Evidence, EvidenceFilters, EvidenceList,
   EvidenceOptions, EvidenceStats, User, VerifyResult,
 } from "./types";
 
@@ -25,7 +25,7 @@ export const evidenceApi = {
   stats: () => request<{ stats: EvidenceStats }>("GET", "/api/evidence/stats"),
   options: () => request<EvidenceOptions>("GET", "/api/evidence/options"),
   get: (id: string) =>
-    request<{ evidence: Evidence; chain_of_custody: CustodyEntry[] }>("GET", `/api/evidence/${encodeURIComponent(id)}`),
+    request<{ evidence: Evidence; chain_of_custody: CustodyEntry[]; latest_verification: LatestVerification | null }>("GET", `/api/evidence/${encodeURIComponent(id)}`),
   upload: (form: FormData, onProgress: (f: number) => void) =>
     uploadWithProgress<{ evidence: Evidence }>("/api/evidence", form, onProgress),
   // 409 means the stored file was unreadable: the body still carries the outcome.

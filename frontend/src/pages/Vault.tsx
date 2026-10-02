@@ -81,7 +81,8 @@ export function VaultPage() {
             <option value="">All integrity states</option>
             <option value="verified">Verified</option>
             <option value="unverified">Not yet verified</option>
-            <option value="failed">Failed</option>
+            <option value="mismatch">Mismatch detected</option>
+            <option value="unavailable">Unavailable</option>
           </select>
         </div>
 

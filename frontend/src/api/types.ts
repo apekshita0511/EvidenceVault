@@ -37,7 +37,8 @@ export interface EvidenceList {
 export interface EvidenceStats {
   total: number;
   verified: number;
-  failed: number;
+  mismatch: number;
+  unavailable: number;
   unverified: number;
   recent_uploads: number;
 }
@@ -77,8 +78,19 @@ export interface AuditEntry {
   user_name: string | null;
 }
 
+export interface LatestVerification {
+  result: "match" | "mismatch" | "unreadable";
+  recorded_sha256: string;
+  computed_sha256: string | null;
+  reason: string | null;
+  verified_at: string;
+  verified_by: string | null;
+}
+
 export interface VerifyResult {
   result: "match" | "mismatch" | "unreadable";
+  reason?: string;
+  message?: string;
   recorded_sha256?: string;
   computed_sha256?: string | null;
   note: string;

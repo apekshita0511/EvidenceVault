@@ -3,8 +3,7 @@ import { useParams } from "react-router-dom";
 import { Download, FileSearch, ShieldCheck } from "lucide-react";
 import { ApiError, downloadFile } from "../api/client";
 import { activityApi, evidenceApi } from "../api/endpoints";
-import type { VerifyResult } from "../api/types";
-import { AuditDetails } from "../components/AuditDetails";
+import type { LatestVerification } from "../api/types";import { AuditDetails } from "../components/AuditDetails";
 import { EventIcon } from "../components/EventIcon";
 import { IntegrityBadge } from "../components/IntegrityBadge";
 import { PageHeader } from "../components/PageHeader";
@@ -23,7 +22,6 @@ export function EvidenceDetailPage() {
   const audit = useAsync(() => activityApi.audit(10, 0, id), [id]);
   const toast = useToast();
   const [verifying, setVerifying] = useState(false);
-  const [result, setResult] = useState<VerifyResult | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
 
   if (detail.error && !detail.data) {
@@ -38,11 +36,12 @@ export function EvidenceDetailPage() {
   }
 
   const ev = detail.data?.evidence;
+  const lv = detail.data?.latest_verification ?? null;
 
   async function verify() {
     setVerifying(true); setActionError(null);
     const r = await runVerification(id, toast);
-    if (r) { setResult(r); detail.reload(); audit.reload(); }
+    if (r) { detail.reload(); audit.reload(); } // the card re-renders from the persisted backend record
     else setActionError("Verification could not be completed. No integrity result was recorded.");
     setVerifying(false);
   }
@@ -73,28 +72,26 @@ export function EvidenceDetailPage() {
           <section className="card" aria-label="Integrity">
             <div className="card-head"><h2>Integrity</h2>{ev && <IntegrityBadge value={ev.integrity} />}</div>
             <div className="verify-panel">
-              {ev?.last_verified_at
-                ? <p className="cell-sub">Last verification recorded {formatDateTime(ev.last_verified_at)}.</p>
-                : <p className="cell-sub">This evidence has not been verified since it was registered.</p>}
-              {result && (
-                result.result === "match" ? (
-                  <Alert tone="success">Integrity check passed: the stored file's SHA-256 equals the recorded digest.</Alert>
-                ) : result.result === "mismatch" ? (
-                  <Alert tone="danger">Integrity check failed: the stored file's SHA-256 differs from the recorded digest.
-                    <div className="mono" style={{ marginTop: 6, wordBreak: "break-all" }}>recorded: {result.recorded_sha256}<br />computed: {result.computed_sha256}</div></Alert>
-                ) : (
-                  <Alert tone="danger">The stored file is missing or unreadable, so it could not be verified.</Alert>
-                )
+              {detail.loading && !detail.data ? <Skeleton h={48} /> : <VerificationBanner v={lv} />}
+              {ev && (
+                <dl className="dl" style={{ padding: 0 }}>
+                  <dt>Recorded SHA-256</dt>
+                  <dd><div className="hash-full"><span style={{ flex: 1 }}>{ev.sha256_hash}</span><CopyButton value={ev.sha256_hash} label="Copy recorded SHA-256" /></div></dd>
+                  <dt>Latest calculated SHA-256</dt>
+                  <dd>{lv?.computed_sha256
+                    ? <div className={`hash-full${lv.result === "mismatch" ? " differs" : ""}`}><span style={{ flex: 1 }}>{lv.computed_sha256}</span><CopyButton value={lv.computed_sha256} label="Copy calculated SHA-256" /></div>
+                    : <span className="cell-sub">{lv ? "Not available: the file could not be hashed in the last check." : "No verification has been run."}</span>}</dd>
+                  <dt>Last verified</dt>
+                  <dd>{lv ? <>{formatDateTime(lv.verified_at)}{lv.verified_by && <span className="cell-sub"> by {lv.verified_by}</span>}</> : <span className="cell-sub">Never</span>}</dd>
+                </dl>
               )}
-              <Alert tone="info">A match shows the checked bytes equal the recorded hash. It does not prove when, where or by whom the evidence originated, and it is not a complete chain of custody.</Alert>
+              <Alert tone="info">A matching SHA-256 digest indicates that the checked file bytes match the recorded digest. A mismatch indicates that the bytes differ from the recorded digest; it does not by itself establish when, how, or by whom the change occurred.</Alert>
             </div>
           </section>
-
           <section className="card" aria-label="Metadata">
             <div className="card-head"><h2>Details</h2></div>
             {!ev ? <div className="card-pad"><Skeleton h={80} /></div> : (
               <dl className="dl">
-                <dt>SHA-256</dt><dd><div className="hash-full"><span style={{ flex: 1 }}>{ev.sha256_hash}</span><CopyButton value={ev.sha256_hash} label="Copy full SHA-256" /></div></dd>
                 <dt>File name</dt><dd>{ev.original_filename ?? "-"}</dd>
                 <dt>Size</dt><dd>{formatBytes(ev.size_bytes)}</dd>
                 <dt>Content type</dt><dd>{ev.mime_type ?? "-"} <span className="cell-sub">(as reported by the uploader)</span></dd>
@@ -144,4 +141,18 @@ export function EvidenceDetailPage() {
       </div>
     </>
   );
+}
+
+const reasonText: Record<string, string> = {
+  missing_or_unreadable: "The stored file is missing or unreadable. This does not indicate tampering.",
+  malformed_recorded_digest: "The recorded digest is malformed, so no comparison was possible.",
+  unsafe_storage_path: "The stored file reference is invalid, so no comparison was possible.",
+};
+
+// Reflects only the persisted result of a real server-side verification.
+function VerificationBanner({ v }: { v: LatestVerification | null }) {
+  if (!v) return <Alert tone="warning"><b>Not yet verified.</b> No integrity check has been run on this evidence.</Alert>;
+  if (v.result === "match") return <Alert tone="success"><b>Integrity match.</b> The recalculated SHA-256 equals the recorded digest.</Alert>;
+  if (v.result === "mismatch") return <Alert tone="danger"><b>Integrity mismatch detected.</b> The stored file's bytes differ from the recorded digest.</Alert>;
+  return <Alert tone="info"><b>Verification unavailable.</b> {reasonText[v.reason ?? ""] ?? "The file could not be checked."}</Alert>;
 }

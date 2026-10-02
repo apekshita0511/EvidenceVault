@@ -4,7 +4,7 @@ import { toneFor } from "../lib/labels";
 const icons: Record<string, LucideIcon> = {
   registered: FilePlus2, accessed: Download, integrity_match: ShieldCheck, integrity_mismatch: ShieldX, integrity_unreadable: ShieldAlert,
   "auth.register": UserPlus, "auth.login": LogIn, "auth.login_failed": KeyRound, "evidence.register": FilePlus2,
-  "evidence.verify": ShieldCheck, "evidence.download": Download, "evidence.access_denied": ShieldAlert, "access.denied": ShieldAlert,
+  "evidence.verify": ShieldCheck, "evidence.integrity_mismatch": ShieldX, "evidence.download": Download, "evidence.access_denied": ShieldAlert, "access.denied": ShieldAlert,
 };
 
 export function EventIcon({ action, toneOverride }: { action: string; toneOverride?: string }) {
